@@ -1,0 +1,1023 @@
+(function(){
+  "use strict";
+
+  const REQUIRED_KEY = "btx007";
+  const LS = {
+    authed: "btx_authed_v1",
+    prof: "btx_prof_v1",
+    appts: "btx_appts_v1",
+    ficha: "btx_ficha_v1",
+    rx: "btx_rx_v1",
+    atestado: "btx_atestado_v1",
+    orc: "btx_orc_v1"
+  };
+
+  const $ = (id)=>document.getElementById(id);
+  const now = ()=>new Date();
+  const pad2 = (n)=>String(n).padStart(2,"0");
+  const toISODate = (d)=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+  const toISOTime = (d)=>`${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const fmtDateBR = (iso)=>{
+    if(!iso) return "";
+    const [y,m,dd]=iso.split("-");
+    return `${dd}/${m}/${y}`;
+  };
+  const safeJSON = (s, fallback)=>{ try{ return JSON.parse(s); }catch{ return fallback; } };
+  const save = (k,v)=>localStorage.setItem(k, JSON.stringify(v));
+  const load = (k, fallback)=>{
+    const raw = localStorage.getItem(k);
+    if(!raw) return fallback;
+    return safeJSON(raw, fallback);
+  };
+  const setMsg = (el, text, type)=>{
+    el.classList.remove("bad","good");
+    if(type) el.classList.add(type);
+    el.textContent = text || "";
+  };
+  function escapeHtmlLite(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;");
+  }
+
+  const loginView = $("loginView");
+  const appView = $("appView");
+  const loginKey = $("loginKey");
+  const btnLogin = $("btnLogin");
+  const btnHelpLogin = $("btnHelpLogin");
+  const loginMsg = $("loginMsg");
+
+  const netPill = $("netPill");
+  const btnLogout = $("btnLogout");
+  const btnInstall = $("btnInstall");
+
+  const navButtons = Array.from(document.querySelectorAll(".navBtn"));
+  const tabs = {
+    agenda: $("tab-agenda"),
+    ficha: $("tab-ficha"),
+    receita: $("tab-receita"),
+    atestado: $("tab-atestado"),
+    orcamento: $("tab-orcamento"),
+    config: $("tab-config"),
+  };
+
+  const modal = $("modal");
+  const modalTitle = $("modalTitle");
+  const modalBody = $("modalBody");
+  const modalOk = $("modalOk");
+
+  const apptDate = $("apptDate");
+  const apptTime = $("apptTime");
+  const apptPatient = $("apptPatient");
+  const apptPhone = $("apptPhone");
+  const apptType = $("apptType");
+  const apptStatus = $("apptStatus");
+  const apptNotes = $("apptNotes");
+  const btnAddAppt = $("btnAddAppt");
+  const btnClearAppt = $("btnClearAppt");
+  const apptList = $("apptList");
+  const apptEmpty = $("apptEmpty");
+  const agendaRangePill = $("agendaRangePill");
+  const searchAppt = $("searchAppt");
+
+  const btnToday = $("btnToday");
+  const btnWeek = $("btnWeek");
+  const btnDayPdf = $("btnDayPdf");
+  const btnWeekPdf = $("btnWeekPdf");
+  const btnMonthPdf = $("btnMonthPdf");
+
+  const profNome = $("profNome");
+  const profReg = $("profReg");
+  const profFone = $("profFone");
+  const profEmail = $("profEmail");
+  const profEndereco = $("profEndereco");
+  const profObs = $("profObs");
+  const btnSaveProf = $("btnSaveProf");
+  const btnResetAll = $("btnResetAll");
+  const cfgMsg = $("cfgMsg");
+
+  const footLine = $("footLine");
+  const clock = $("clock");
+
+  const fichaPaciente = $("fichaPaciente");
+  const fichaData = $("fichaData");
+  const fichaIdade = $("fichaIdade");
+  const fichaTelefone = $("fichaTelefone");
+  const fichaQueixa = $("fichaQueixa");
+  const fichaHDA = $("fichaHDA");
+  const fichaAntecedentes = $("fichaAntecedentes");
+  const fichaExame = $("fichaExame");
+  const fichaDx = $("fichaDx");
+  const fichaPlano = $("fichaPlano");
+  const btnFichaPdf = $("btnFichaPdf");
+  const btnFichaClear = $("btnFichaClear");
+
+  const rxPaciente = $("rxPaciente");
+  const rxData = $("rxData");
+  const rxTexto = $("rxTexto");
+  const btnReceitaPdf = $("btnReceitaPdf");
+  const btnReceitaClear = $("btnReceitaClear");
+
+  const atPaciente = $("atPaciente");
+  const atData = $("atData");
+  const atDias = $("atDias");
+  const atCID = $("atCID");
+  const atTexto = $("atTexto");
+  const btnAtestadoPdf = $("btnAtestadoPdf");
+  const btnAtestadoClear = $("btnAtestadoClear");
+
+  const orcPaciente = $("orcPaciente");
+  const orcData = $("orcData");
+  const orcTexto = $("orcTexto");
+  const btnOrcPdf = $("btnOrcPdf");
+  const btnOrcClear = $("btnOrcClear");
+
+  const btnBackup = $("btnBackup");
+  const btnRestore = $("btnRestore");
+  const btnInstallHint = $("btnInstallHint");
+  const btnTestPdf = $("btnTestPdf");
+
+  const btnToggleSidebar = $("btnToggleSidebar");
+  const sidebar = $("sidebar");
+
+  let state = {
+    viewMode: "day",
+    search: ""
+  };
+
+  function showModal(title, body){
+    modalTitle.textContent = title || "Aviso";
+    modalBody.textContent = body || "";
+    modal.classList.remove("hidden");
+  }
+  function hideModal(){ modal.classList.add("hidden"); }
+  modalOk.addEventListener("click", hideModal);
+
+  function refreshNet(){
+    const online = navigator.onLine;
+    netPill.textContent = online ? "Online" : "Offline";
+    netPill.style.borderColor = online ? "rgba(25,226,140,.45)" : "rgba(255,77,77,.5)";
+    netPill.style.color = online ? "var(--muted)" : "#ffd6d6";
+  }
+  window.addEventListener("online", refreshNet);
+  window.addEventListener("offline", refreshNet);
+
+  function tick(){
+    const d = now();
+    clock.textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())} • ${fmtDateBR(toISODate(d))}`;
+  }
+
+  function isAuthed(){
+    return localStorage.getItem(LS.authed) === "1";
+  }
+  function setAuthed(v){
+    localStorage.setItem(LS.authed, v ? "1" : "0");
+  }
+  function goApp(){
+    loginView.classList.add("hidden");
+    appView.classList.remove("hidden");
+    refreshNet();
+    tick();
+    hydrateAll();
+    renderAgenda();
+  }
+  function goLogin(){
+    appView.classList.add("hidden");
+    loginView.classList.remove("hidden");
+    loginKey.value = "";
+    setMsg(loginMsg, "", "");
+  }
+
+  btnLogin.addEventListener("click", ()=>{
+    const key = (loginKey.value || "").trim().toLowerCase();
+    if(key === REQUIRED_KEY){
+      setAuthed(true);
+      setMsg(loginMsg, "Acesso liberado.", "good");
+      goApp();
+    }else{
+      setAuthed(false);
+      setMsg(loginMsg, "Chave inválida. Use: btx007", "bad");
+    }
+  });
+
+  btnHelpLogin.addEventListener("click", ()=>{
+    showModal("Login", "Digite a chave: btx007 (tudo minúsculo, sem traço).");
+  });
+
+  btnLogout.addEventListener("click", ()=>{
+    setAuthed(false);
+    goLogin();
+  });
+
+  function setTab(name){
+    navButtons.forEach(b=>b.classList.toggle("active", b.dataset.tab===name));
+    Object.keys(tabs).forEach(k=>tabs[k].classList.toggle("active", k===name));
+  }
+  navButtons.forEach(btn=>{
+    btn.addEventListener("click", ()=>setTab(btn.dataset.tab));
+  });
+
+  btnToggleSidebar.addEventListener("click", ()=>{
+    sidebar.classList.toggle("collapsed");
+    if(sidebar.classList.contains("collapsed")){
+      sidebar.style.maxHeight = "72px";
+      sidebar.style.overflow = "hidden";
+    }else{
+      sidebar.style.maxHeight = "";
+      sidebar.style.overflow = "";
+    }
+  });
+
+  function setDefaults(){
+    const d = now();
+    apptDate.value = toISODate(d);
+    apptTime.value = toISOTime(d);
+    fichaData.value = toISODate(d);
+    rxData.value = toISODate(d);
+    atData.value = toISODate(d);
+    orcData.value = toISODate(d);
+  }
+
+  function getProf(){
+    return load(LS.prof, { nome:"", reg:"", fone:"", email:"", endereco:"", obs:"" });
+  }
+  function setProf(p){
+    save(LS.prof, p);
+    refreshFooter();
+  }
+  function refreshFooter(){
+    const p = getProf();
+    const addr = p.endereco ? `• ${p.endereco}` : "";
+    footLine.textContent = `Documentos Clínicos${addr}`;
+  }
+  function hydrateProf(){
+    const p = getProf();
+    profNome.value = p.nome || "";
+    profReg.value = p.reg || "";
+    profFone.value = p.fone || "";
+    profEmail.value = p.email || "";
+    profEndereco.value = p.endereco || "";
+    profObs.value = p.obs || "";
+    refreshFooter();
+  }
+  btnSaveProf.addEventListener("click", ()=>{
+    const p = {
+      nome: (profNome.value||"").trim(),
+      reg: (profReg.value||"").trim(),
+      fone: (profFone.value||"").trim(),
+      email: (profEmail.value||"").trim(),
+      endereco: (profEndereco.value||"").trim(),
+      obs: (profObs.value||"").trim(),
+    };
+    setProf(p);
+    setMsg(cfgMsg, "Configurações salvas.", "good");
+    setTimeout(()=>setMsg(cfgMsg,"",""), 1400);
+  });
+
+  btnResetAll.addEventListener("click", ()=>{
+    if(!confirm("Isso apaga agenda e documentos deste aparelho. Continuar?")) return;
+    Object.values(LS).forEach(k=>localStorage.removeItem(k));
+    setAuthed(true);
+    hydrateAll();
+    renderAgenda();
+    showModal("Zerado", "Tudo foi apagado neste aparelho.");
+  });
+
+  // ===== AGENDA =====
+  function getAppts(){ return load(LS.appts, []); }
+  function setAppts(list){ save(LS.appts, list); }
+
+  function clearApptForm(){
+    apptPatient.value = "";
+    apptPhone.value = "";
+    apptType.value = "";
+    apptStatus.value = "confirmado";
+    apptNotes.value = "";
+    apptTime.value = toISOTime(now());
+  }
+  btnClearAppt.addEventListener("click", clearApptForm);
+
+  function cryptoRandom(){
+    return "A" + Math.random().toString(16).slice(2) + Date.now().toString(16);
+  }
+  function normalizeAppt(a){
+    return {
+      id: a.id || cryptoRandom(),
+      date: a.date || toISODate(now()),
+      time: a.time || "08:00",
+      patient: (a.patient||"").trim(),
+      phone: (a.phone||"").trim(),
+      type: (a.type||"").trim(),
+      status: a.status || "confirmado",
+      notes: (a.notes||"").trim(),
+      createdAt: a.createdAt || Date.now()
+    };
+  }
+
+  btnAddAppt.addEventListener("click", ()=>{
+    const a = normalizeAppt({
+      date: apptDate.value,
+      time: apptTime.value,
+      patient: apptPatient.value,
+      phone: apptPhone.value,
+      type: apptType.value,
+      status: apptStatus.value,
+      notes: apptNotes.value
+    });
+
+    if(!a.patient){
+      showModal("Faltou paciente", "Coloca pelo menos o nome do paciente pra salvar.");
+      return;
+    }
+
+    const list = getAppts();
+    list.push(a);
+    setAppts(list);
+    clearApptForm();
+    renderAgenda();
+  });
+
+  function deleteAppt(id){
+    const list = getAppts().filter(x=>x.id!==id);
+    setAppts(list);
+    renderAgenda();
+  }
+  function updateAppt(id, patch){
+    const list = getAppts();
+    const idx = list.findIndex(x=>x.id===id);
+    if(idx<0) return;
+    list[idx] = normalizeAppt({...list[idx], ...patch});
+    setAppts(list);
+    renderAgenda();
+  }
+
+  function getRangeForMode(){
+    const base = apptDate.value ? new Date(apptDate.value+"T00:00:00") : new Date();
+    if(state.viewMode === "week"){
+      const day = base.getDay();
+      const diffToMon = (day===0 ? -6 : 1-day);
+      const mon = new Date(base);
+      mon.setDate(base.getDate()+diffToMon);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate()+6);
+      return { start: toISODate(mon), end: toISODate(sun) };
+    }
+    const iso = toISODate(base);
+    return { start: iso, end: iso };
+  }
+
+  function setAgendaMode(mode){
+    state.viewMode = mode;
+    const {start,end} = getRangeForMode();
+    agendaRangePill.textContent = mode==="week"
+      ? `Semana: ${fmtDateBR(start)} — ${fmtDateBR(end)}`
+      : `Dia: ${fmtDateBR(start)}`;
+  }
+
+  btnToday.addEventListener("click", ()=>{
+    state.viewMode = "day";
+    apptDate.value = toISODate(now());
+    setAgendaMode("day");
+    renderAgenda();
+  });
+  btnWeek.addEventListener("click", ()=>{
+    state.viewMode = "week";
+    setAgendaMode("week");
+    renderAgenda();
+  });
+
+  apptDate.addEventListener("change", ()=>{
+    setAgendaMode(state.viewMode);
+    renderAgenda();
+  });
+
+  searchAppt.addEventListener("input", ()=>{
+    state.search = (searchAppt.value||"").trim().toLowerCase();
+    renderAgenda();
+  });
+
+  function filterAppts(list){
+    const { start, end } = getRangeForMode();
+    const s = state.search;
+
+    return list
+      .filter(a=>a.date>=start && a.date<=end)
+      .filter(a=>{
+        if(!s) return true;
+        const blob = `${a.patient} ${a.type} ${a.status} ${a.notes} ${a.phone}`.toLowerCase();
+        return blob.includes(s);
+      })
+      .sort((a,b)=>{
+        if(a.date!==b.date) return a.date.localeCompare(b.date);
+        return (a.time||"").localeCompare(b.time||"");
+      });
+  }
+
+  function waLink(phone, msg){
+    const clean = (phone||"").replace(/\D/g,"");
+    if(!clean) return "";
+    const text = encodeURIComponent(msg||"Olá! Confirmando seu horário.");
+    return `https://wa.me/${clean}?text=${text}`;
+  }
+
+  function renderAgenda(){
+    setAgendaMode(state.viewMode);
+    const list = filterAppts(getAppts());
+    apptList.innerHTML = "";
+
+    if(list.length===0){
+      apptEmpty.classList.remove("hidden");
+      return;
+    }
+    apptEmpty.classList.add("hidden");
+
+    for(const a of list){
+      const card = document.createElement("div");
+      card.className = "apptCard";
+
+      card.innerHTML = `
+        <div class="apptTop">
+          <div class="apptLeft">
+            <div class="apptWhen">
+              <span class="apptDate">${fmtDateBR(a.date)}</span>
+              <span class="dot">•</span>
+              <span class="apptTime">${escapeHtmlLite(a.time||"")}</span>
+            </div>
+            <div class="apptPatient">${escapeHtmlLite(a.patient||"")}</div>
+            <div class="apptMeta">
+              <span class="chip">${escapeHtmlLite(a.type||"—")}</span>
+              <span class="chip chipStatus">${escapeHtmlLite(a.status||"")}</span>
+            </div>
+            ${a.notes ? `<div class="apptNotes">${escapeHtmlLite(a.notes)}</div>` : ""}
+          </div>
+
+          <div class="apptRight">
+            <select class="apptSel">
+              ${["confirmado","pendente","faltou","remarcado","cancelado"].map(v=>`
+                <option value="${v}" ${v===a.status?"selected":""}>${v}</option>
+              `).join("")}
+            </select>
+
+            <button class="btn tiny apptW" ${a.phone ? "" : "disabled"}>WhatsApp</button>
+            <button class="btn tiny ghost apptDel">Excluir</button>
+          </div>
+        </div>
+      `;
+
+      apptList.appendChild(card);
+
+      const sel = card.querySelector(".apptSel");
+      const btnW = card.querySelector(".apptW");
+      const btnDel = card.querySelector(".apptDel");
+
+      sel.addEventListener("change", ()=>updateAppt(a.id, {status: sel.value}));
+
+      btnW.addEventListener("click", ()=>{
+        if(!a.phone) return;
+        window.open(
+          waLink(a.phone, `Olá ${a.patient}! Confirmando seu horário em ${fmtDateBR(a.date)} às ${a.time}.`),
+          "_blank",
+          "noopener"
+        );
+      });
+
+      btnDel.addEventListener("click", ()=>{
+        if(confirm("Excluir este agendamento?")) deleteAppt(a.id);
+      });
+    }
+  }
+
+  // ===== DOCS AUTO SAVE =====
+  function bindAutoSave(){
+    const fichaInputs = [fichaPaciente,fichaData,fichaIdade,fichaTelefone,fichaQueixa,fichaHDA,fichaAntecedentes,fichaExame,fichaDx,fichaPlano];
+    fichaInputs.forEach(el=>{
+      el.addEventListener("input", ()=>save(LS.ficha, getFichaData()));
+      el.addEventListener("change", ()=>save(LS.ficha, getFichaData()));
+    });
+
+    [rxPaciente,rxData,rxTexto].forEach(el=>{
+      el.addEventListener("input", ()=>save(LS.rx, getRxData()));
+      el.addEventListener("change", ()=>save(LS.rx, getRxData()));
+    });
+
+    [atPaciente,atData,atDias,atCID,atTexto].forEach(el=>{
+      el.addEventListener("input", ()=>save(LS.atestado, getAtestadoData()));
+      el.addEventListener("change", ()=>save(LS.atestado, getAtestadoData()));
+    });
+
+    [orcPaciente,orcData,orcTexto].forEach(el=>{
+      el.addEventListener("input", ()=>save(LS.orc, getOrcData()));
+      el.addEventListener("change", ()=>save(LS.orc, getOrcData()));
+    });
+  }
+
+  function getFichaData(){
+    return {
+      paciente: fichaPaciente.value||"",
+      data: fichaData.value||"",
+      idade: fichaIdade.value||"",
+      telefone: fichaTelefone.value||"",
+      queixa: fichaQueixa.value||"",
+      hda: fichaHDA.value||"",
+      antecedentes: fichaAntecedentes.value||"",
+      exame: fichaExame.value||"",
+      dx: fichaDx.value||"",
+      plano: fichaPlano.value||"",
+    };
+  }
+  function setFichaData(d){
+    fichaPaciente.value = d.paciente||"";
+    fichaData.value = d.data||toISODate(now());
+    fichaIdade.value = d.idade||"";
+    fichaTelefone.value = d.telefone||"";
+    fichaQueixa.value = d.queixa||"";
+    fichaHDA.value = d.hda||"";
+    fichaAntecedentes.value = d.antecedentes||"";
+    fichaExame.value = d.exame||"";
+    fichaDx.value = d.dx||"";
+    fichaPlano.value = d.plano||"";
+  }
+
+  function getRxData(){ return { paciente: rxPaciente.value||"", data: rxData.value||"", texto: rxTexto.value||"" }; }
+  function setRxData(d){
+    rxPaciente.value = d.paciente||"";
+    rxData.value = d.data||toISODate(now());
+    rxTexto.value = d.texto||"";
+  }
+
+  function getAtestadoData(){
+    return { paciente: atPaciente.value||"", data: atData.value||"", dias: atDias.value||"", cid: atCID.value||"", texto: atTexto.value||"" };
+  }
+  function setAtestadoData(d){
+    atPaciente.value = d.paciente||"";
+    atData.value = d.data||toISODate(now());
+    atDias.value = d.dias||"";
+    atCID.value = d.cid||"";
+    atTexto.value = d.texto||"";
+  }
+
+  function getOrcData(){ return { paciente: orcPaciente.value||"", data: orcData.value||"", texto: orcTexto.value||"" }; }
+  function setOrcData(d){
+    orcPaciente.value = d.paciente||"";
+    orcData.value = d.data||toISODate(now());
+    orcTexto.value = d.texto||"";
+  }
+
+  // ===== RECEITA — MEDICAÇÕES: TODAS escolhem 1 por vez =====
+  const RX_PRESETS = {
+    analgesico: {
+      "Dipirona 500 mg": "Dipirona 500 mg — 1 comprimido a cada 6/6h se dor, por até 3 dias.",
+      "Paracetamol 750 mg": "Paracetamol 750 mg — 1 comprimido a cada 8/8h se dor, por até 3 dias.",
+      "Ibuprofeno 400 mg (dor leve/mod)": "Ibuprofeno 400 mg — 1 comprimido a cada 8/8h se dor, por até 3 dias (se indicado)."
+    },
+    antiinflamatorio: {
+      "Ibuprofeno 600 mg": "Ibuprofeno 600 mg — 1 comprimido a cada 8/8h por 3 dias, após alimentação.",
+      "Nimesulida 100 mg": "Nimesulida 100 mg — 1 comprimido a cada 12/12h por 3 dias, após alimentação.",
+      "Dexametasona 4 mg (edema)": "Dexametasona 4 mg — 1 comprimido a cada 12/12h por 2 dias (se indicado)."
+    },
+    antibiotico: {
+      "Amoxicilina 500 mg": "Amoxicilina 500 mg — 1 cápsula a cada 8/8h por 7 dias.",
+      "Amoxicilina + Clavulanato 875/125 mg": "Amoxicilina + Clavulanato 875/125 mg — 1 comprimido a cada 12/12h por 7 dias (se indicado).",
+      "Clindamicina 300 mg (alérgicos a penicilina)": "Clindamicina 300 mg — 1 cápsula a cada 6/6h por 7 dias (se indicado).",
+      "Azitromicina 500 mg": "Azitromicina 500 mg — 1 comprimido ao dia por 3 dias (se indicado)."
+    },
+    antifungico: {
+      "Nistatina suspensão": "Nistatina suspensão — 5 mL 4x/dia por 7–14 dias (conforme avaliação).",
+      "Fluconazol 150 mg": "Fluconazol 150 mg — dose única (quando indicado).",
+      "Miconazol gel oral": "Miconazol gel oral — aplicar 3–4x/dia por 7–14 dias (quando indicado)."
+    },
+    antialergico: {
+      "Loratadina 10 mg": "Loratadina 10 mg — 1 comprimido ao dia por 3–5 dias (se indicado).",
+      "Cetirizina 10 mg": "Cetirizina 10 mg — 1 comprimido ao dia por 3–5 dias (se indicado)."
+    },
+    gastro: {
+      "Omeprazol 20 mg": "Omeprazol 20 mg — 1 cápsula em jejum por 7 dias (quando indicado)."
+    },
+    enxaguante: {
+      "Clorexidina 0,12%": "Digluconato de clorexidina 0,12% — bochechar 15 mL por 30s, 2x/dia por 7–10 dias (não ingerir)."
+    }
+  };
+
+  function nextRxNumber(){
+    const t = (rxTexto.value || "").trim();
+    if(!t) return 1;
+    const matches = t.match(/^\s*(\d+)\)\s+/gm);
+    if(!matches) return 1;
+    let max = 0;
+    for(const m of matches){
+      const n = parseInt(m, 10);
+      if(!Number.isNaN(n) && n > max) max = n;
+    }
+    return max + 1;
+  }
+
+  function addRxLine(line){
+    const n = nextRxNumber();
+    const cur = (rxTexto.value || "").trim();
+    const add = `${n}) ${line}`;
+    rxTexto.value = cur ? (cur + "\n" + add) : add;
+    save(LS.rx, getRxData());
+  }
+
+  function chooseAndAdd(categoryKey, title){
+    const opts = RX_PRESETS[categoryKey] || {};
+    const names = Object.keys(opts);
+    if(!names.length){
+      showModal("Sem opções", `Não encontrei medicações em: ${title}`);
+      return;
+    }
+    const choice = prompt(
+      `Escolha em ${title} (digite o número):\n` +
+      names.map((n,i)=>`${i+1}) ${n}`).join("\n")
+    );
+    const idx = Number(choice) - 1;
+    if(Number.isNaN(idx) || idx < 0 || idx >= names.length) return;
+    addRxLine(opts[names[idx]]);
+  }
+
+  document.querySelectorAll("[data-rx]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const k = btn.getAttribute("data-rx");
+      if(k === "analgesico") return chooseAndAdd("analgesico","Analgésico");
+      if(k === "antiinflamatorio") return chooseAndAdd("antiinflamatorio","Anti-inflamatório");
+      if(k === "antibiotico") return chooseAndAdd("antibiotico","Antibiótico");
+      if(k === "antifungico") return chooseAndAdd("antifungico","Antifúngico");
+      if(k === "antialergico") return chooseAndAdd("antialergico","Antialérgico");
+      if(k === "gastro") return chooseAndAdd("gastro","Gastroprotetor");
+      if(k === "enxaguante") return chooseAndAdd("enxaguante","Enxaguante");
+    });
+  });
+
+  // ===== CLEAR DOCS =====
+  btnFichaClear.addEventListener("click", ()=>{
+    if(!confirm("Limpar ficha clínica?")) return;
+    setFichaData({});
+    save(LS.ficha, getFichaData());
+  });
+  btnReceitaClear.addEventListener("click", ()=>{
+    if(!confirm("Limpar receituário?")) return;
+    setRxData({});
+    save(LS.rx, getRxData());
+  });
+  btnAtestadoClear.addEventListener("click", ()=>{
+    if(!confirm("Limpar atestado?")) return;
+    setAtestadoData({});
+    save(LS.atestado, getAtestadoData());
+  });
+  btnOrcClear.addEventListener("click", ()=>{
+    if(!confirm("Limpar orçamento?")) return;
+    setOrcData({});
+    save(LS.orc, getOrcData());
+  });
+
+  // ===== PDF (print) =====
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
+  function openPrintWindow(title, html){
+    const w = window.open("", "_blank");
+    if(!w){
+      showModal("Bloqueado", "Seu navegador bloqueou o PDF. Libere pop-up pra este app.");
+      return;
+    }
+
+    const p = getProf();
+    const footer = `
+      <div class="pdfFooter">
+        <div><b>${escapeHtml(p.nome||"")}</b> ${escapeHtml(p.reg||"")}</div>
+        <div>${escapeHtml(p.fone||"")} ${p.email ? "• "+escapeHtml(p.email) : ""}</div>
+        <div>${escapeHtml(p.endereco||"")}</div>
+        ${p.obs ? `<div class="muted">${escapeHtml(p.obs)}</div>` : ""}
+      </div>
+    `;
+
+    w.document.open();
+    w.document.write(`<!doctype html>
+<html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escapeHtml(title)}</title>
+<style>
+  :root{ --text:#111; --muted:#444; }
+  body{ font-family: Arial, sans-serif; margin:24px; color:var(--text); }
+  .head{ display:flex; justify-content:space-between; align-items:flex-start; gap:14px; border-bottom:2px solid #0fbf74; padding-bottom:10px; margin-bottom:14px; }
+  .brand{ font-weight:900; font-size:18px; }
+  .sub{ color:var(--muted); font-size:12px; margin-top:2px; }
+  .docTitle{ font-size:18px; font-weight:900; }
+  .box{ border:1px solid #ddd; border-radius:10px; padding:12px; margin:10px 0; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .line{ margin:6px 0; }
+  .muted{ color:var(--muted); font-size:12px; }
+  .pdfFooter{ margin-top:18px; border-top:1px solid #ddd; padding-top:10px; font-size:12px; color:#111; }
+  .table{ width:100%; border-collapse:collapse; margin-top:10px; }
+  .table th,.table td{ border-bottom:1px solid #eee; padding:8px 6px; font-size:12px; text-align:left; }
+  @media print{ body{ margin:18px; } }
+</style>
+</head><body>
+<div class="head">
+  <div>
+    <div class="brand">BTX Docs Saúde</div>
+    <div class="sub">Documentos Clínicos</div>
+  </div>
+  <div class="docTitle">${escapeHtml(title)}</div>
+</div>
+
+${html}
+
+${footer}
+
+<script>window.onload=()=>{ window.print(); };</script>
+</body></html>`);
+    w.document.close();
+  }
+
+  function buildAgendaTable(list){
+    if(!list.length) return `<div class="box">Nenhum agendamento encontrado.</div>`;
+    const rows = list.map(a=>{
+      return `<tr>
+        <td>${escapeHtml(fmtDateBR(a.date))}</td>
+        <td>${escapeHtml(a.time||"")}</td>
+        <td>${escapeHtml(a.patient||"")}</td>
+        <td>${escapeHtml(a.type||"")}</td>
+        <td>${escapeHtml(a.status||"")}</td>
+      </tr>`;
+    }).join("");
+    return `
+      <div class="box">
+        <table class="table">
+          <thead><tr><th>Data</th><th>Hora</th><th>Paciente</th><th>Tipo</th><th>Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  btnDayPdf.addEventListener("click", ()=>{
+    state.viewMode="day";
+    const list = filterAppts(getAppts());
+    const title = `Agenda do Dia (${fmtDateBR(getRangeForMode().start)})`;
+    openPrintWindow(title, buildAgendaTable(list));
+  });
+
+  btnWeekPdf.addEventListener("click", ()=>{
+    state.viewMode="week";
+    const {start,end} = getRangeForMode();
+    const list = filterAppts(getAppts());
+    const title = `Agenda da Semana (${fmtDateBR(start)} — ${fmtDateBR(end)})`;
+    openPrintWindow(title, buildAgendaTable(list));
+  });
+
+  btnMonthPdf.addEventListener("click", ()=>{
+    const base = apptDate.value ? new Date(apptDate.value+"T00:00:00") : new Date();
+    const y = base.getFullYear();
+    const m = base.getMonth()+1;
+    const start = `${y}-${pad2(m)}-01`;
+    const endDate = new Date(y, m, 0).getDate();
+    const end = `${y}-${pad2(m)}-${pad2(endDate)}`;
+
+    const list = getAppts()
+      .filter(a=>a.date>=start && a.date<=end)
+      .sort((a,b)=>(a.date!==b.date? a.date.localeCompare(b.date) : (a.time||"").localeCompare(b.time||"")));
+
+    const title = `Agenda do Mês (${pad2(m)}/${y})`;
+    openPrintWindow(title, buildAgendaTable(list));
+  });
+
+  btnFichaPdf.addEventListener("click", ()=>{
+    const d = getFichaData();
+    const html = `
+      <div class="box">
+        <div class="grid2">
+          <div class="line"><b>Paciente:</b> ${escapeHtml(d.paciente)}</div>
+          <div class="line"><b>Data:</b> ${escapeHtml(fmtDateBR(d.data))}</div>
+          <div class="line"><b>Idade:</b> ${escapeHtml(d.idade)}</div>
+          <div class="line"><b>Telefone:</b> ${escapeHtml(d.telefone)}</div>
+        </div>
+      </div>
+      <div class="box"><b>Queixa principal</b><div class="line">${escapeHtml(d.queixa).replaceAll("\n","<br>")}</div></div>
+      <div class="box"><b>História da doença atual</b><div class="line">${escapeHtml(d.hda).replaceAll("\n","<br>")}</div></div>
+      <div class="box"><b>Antecedentes / Medicações</b><div class="line">${escapeHtml(d.antecedentes).replaceAll("\n","<br>")}</div></div>
+      <div class="box"><b>Exame</b><div class="line">${escapeHtml(d.exame).replaceAll("\n","<br>")}</div></div>
+      <div class="box"><b>Hipóteses / Diagnóstico</b><div class="line">${escapeHtml(d.dx).replaceAll("\n","<br>")}</div></div>
+      <div class="box"><b>Conduta / Plano</b><div class="line">${escapeHtml(d.plano).replaceAll("\n","<br>")}</div></div>
+    `;
+    openPrintWindow("Ficha Clínica", html);
+  });
+
+  btnReceitaPdf.addEventListener("click", ()=>{
+    const d = getRxData();
+    const html = `
+      <div class="box">
+        <div class="grid2">
+          <div class="line"><b>Paciente:</b> ${escapeHtml(d.paciente)}</div>
+          <div class="line"><b>Data:</b> ${escapeHtml(fmtDateBR(d.data))}</div>
+        </div>
+      </div>
+      <div class="box">
+        <b>Prescrição</b>
+        <div class="line">${escapeHtml(d.texto).replaceAll("\n","<br>")}</div>
+      </div>
+    `;
+    openPrintWindow("Receituário", html);
+  });
+
+  btnAtestadoPdf.addEventListener("click", ()=>{
+    const d = getAtestadoData();
+    const dias = d.dias ? `${escapeHtml(d.dias)} dia(s)` : "";
+    const baseText = d.texto && d.texto.trim()
+      ? d.texto.trim()
+      : `Atesto para os devidos fins que ${d.paciente||"o(a) paciente"} esteve em atendimento nesta data, necessitando afastamento por ${d.dias||"__"} dia(s).`;
+
+    const html = `
+      <div class="box">
+        <div class="grid2">
+          <div class="line"><b>Paciente:</b> ${escapeHtml(d.paciente)}</div>
+          <div class="line"><b>Data:</b> ${escapeHtml(fmtDateBR(d.data))}</div>
+          <div class="line"><b>Afastamento:</b> ${dias}</div>
+          <div class="line"><b>CID:</b> ${escapeHtml(d.cid||"")}</div>
+        </div>
+      </div>
+      <div class="box">
+        <b>Texto</b>
+        <div class="line">${escapeHtml(baseText).replaceAll("\n","<br>")}</div>
+      </div>
+    `;
+    openPrintWindow("Atestado", html);
+  });
+
+  btnOrcPdf.addEventListener("click", ()=>{
+    const d = getOrcData();
+    const html = `
+      <div class="box">
+        <div class="grid2">
+          <div class="line"><b>Paciente:</b> ${escapeHtml(d.paciente)}</div>
+          <div class="line"><b>Data:</b> ${escapeHtml(fmtDateBR(d.data))}</div>
+        </div>
+      </div>
+      <div class="box">
+        <b>Itens / Valores</b>
+        <div class="line">${escapeHtml(d.texto).replaceAll("\n","<br>")}</div>
+      </div>
+    `;
+    openPrintWindow("Orçamento", html);
+  });
+
+  // ===== BACKUP/RESTORE =====
+  function buildBackup(){
+    return {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      prof: getProf(),
+      appts: getAppts(),
+      ficha: load(LS.ficha, {}),
+      rx: load(LS.rx, {}),
+      atestado: load(LS.atestado, {}),
+      orc: load(LS.orc, {})
+    };
+  }
+
+  btnBackup.addEventListener("click", ()=>{
+    const data = buildBackup();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BTX_Backup_${toISODate(now())}.json`;
+    a.click();
+
+    setTimeout(()=>URL.revokeObjectURL(url), 1500);
+  });
+
+  btnRestore.addEventListener("click", ()=>{
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "application/json";
+    inp.addEventListener("change", ()=>{
+      const file = inp.files && inp.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        const obj = safeJSON(reader.result, null);
+        if(!obj || typeof obj !== "object"){
+          showModal("Falhou", "Arquivo inválido.");
+          return;
+        }
+        if(!confirm("Restaurar este backup? Isso substitui dados atuais.")) return;
+
+        if(obj.prof) save(LS.prof, obj.prof);
+        if(Array.isArray(obj.appts)) save(LS.appts, obj.appts);
+        if(obj.ficha) save(LS.ficha, obj.ficha);
+        if(obj.rx) save(LS.rx, obj.rx);
+        if(obj.atestado) save(LS.atestado, obj.atestado);
+        if(obj.orc) save(LS.orc, obj.orc);
+
+        hydrateAll();
+        renderAgenda();
+        showModal("Restaurado", "Backup restaurado com sucesso.");
+      };
+      reader.readAsText(file);
+    });
+    inp.click();
+  });
+
+  btnInstallHint.addEventListener("click", ()=>{
+    showModal("Instalar no celular", "Android: abra no Chrome → menu ⋮ → “Instalar app” / “Adicionar à tela inicial”. Depois roda offline.");
+  });
+  btnTestPdf.addEventListener("click", ()=>{
+    openPrintWindow("Teste PDF", `<div class="box">Se abriu e imprimiu/salvou em PDF, tá tudo certo ✅</div>`);
+  });
+
+  async function registerSW(){
+    if(!("serviceWorker" in navigator)) return;
+    try{
+      await navigator.serviceWorker.register("./sw.js");
+    }catch(err){
+      console.warn("SW error:", err);
+    }
+  }
+
+  // ===== PWA INSTALL BUTTON =====
+  let deferredInstallPrompt = null;
+
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if(btnInstall){
+      btnInstall.disabled = false;
+      btnInstall.textContent = "Baixar app";
+    }
+  });
+
+  if(btnInstall){
+    btnInstall.disabled = true;
+    btnInstall.textContent = "Baixar app";
+
+    btnInstall.addEventListener("click", async () => {
+      if(!deferredInstallPrompt){
+        showModal("Instalar", "Se não apareceu o instalador automático, use: Chrome/Edge → menu ⋮ → “Instalar app” / “Adicionar à tela inicial”.");
+        return;
+      }
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+
+      if(choice && choice.outcome === "accepted"){
+        showModal("Instalado", "Pronto. Agora ele roda como app e funciona offline ✅");
+      }else{
+        showModal("Tudo bem", "Instala quando você quiser.");
+      }
+    });
+  }
+
+  function autoAtestadoText(){
+    const p = (atPaciente.value||"").trim();
+    const d = (atDias.value||"").trim();
+    if(!atTexto.value.trim()){
+      atTexto.value = `Atesto para os devidos fins que ${p || "o(a) paciente"} esteve em atendimento nesta data, necessitando afastamento por ${d || "__"} dia(s).`;
+      save(LS.atestado, getAtestadoData());
+    }
+  }
+  atPaciente.addEventListener("input", autoAtestadoText);
+  atDias.addEventListener("input", autoAtestadoText);
+
+  function hydrateDocs(){
+    setFichaData(load(LS.ficha, {}));
+    setRxData(load(LS.rx, {}));
+    setAtestadoData(load(LS.atestado, {}));
+    setOrcData(load(LS.orc, {}));
+  }
+
+  function hydrateAll(){
+    setDefaults();
+    hydrateProf();
+    hydrateDocs();
+  }
+
+  function init(){
+    refreshNet();
+    setDefaults();
+    bindAutoSave();
+    setAgendaMode("day");
+    refreshFooter();
+
+    if(isAuthed()){
+      goApp();
+    }else{
+      goLogin();
+    }
+
+    tick();
+    setInterval(tick, 10000);
+
+    registerSW();
+  }
+
+  init();
+})();
